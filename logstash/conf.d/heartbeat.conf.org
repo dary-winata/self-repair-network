@@ -1,0 +1,54 @@
+input {
+  beats {
+    port => 5055
+  }
+}
+
+filter {
+  if ![health] {
+    mutate {
+      add_field => { "health" => 5 }
+    }
+  }
+
+#  if [summary][up] == 1 {
+#    ruby {
+#      init => "@health_count = 5"
+#      code => "
+#        if @health_count < 5 then
+#          @health_count += 1
+#          event.set('health', @health_count)
+#        end
+#      "
+#    }
+#  }
+
+  ruby {
+    init => "@health_count = 5"
+    code => "
+      value = event.get('[summary][up]')
+      if value == 1 and @health_count < 5
+        @health_count += 1
+      elsif value == 0 and @health_count > -5 
+        @health_count -= 1
+      end
+      
+      event.set('health', @health_count)
+    "
+  } 
+}
+
+output {
+  file {
+     path => "/usr/share/logstash/log/heartbeat.log"
+  }
+#  if [type] == "log" {
+#    elasticsearch {
+#      hosts => ["http://elasticsearch:9200"]
+#      index => "couchdb-data-%{+YYYY.MM.dd}"
+#      user => "elastic"
+#      password => "elastic"
+#    }
+#  }
+}
+

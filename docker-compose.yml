@@ -1,0 +1,143 @@
+version: '3.2'
+
+services:
+  logstash:
+    build:
+      context: logstash/
+      args:
+        LOGSTASH_VERSION: '8.4.0'
+    volumes:
+      - type: bind
+        source: ./logstash/conf.d/
+        target: /usr/share/logstash/pipeline/
+        read_only: true
+      - type: bind
+        source: ./logstash/config/
+        target: /usr/share/logstash/config/
+      - ./logstash/log/:/usr/share/logstash/log/
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "5044:5044"
+      - "5055:5055"
+    expose:
+      - "5044"
+      - "5055"
+    networks:
+      - logging
+    depends_on:
+      - elasticsearch
+  couchdb:
+    build: ./couchdb
+    deploy:
+      resources:
+        limits:
+          memory: 200M
+            #    volumes:
+            #      - ./couchdb/log:/var/log/couchdb/
+    ports:
+      - "5984:5984"
+    environment: 
+      COUCHDB_USER: admin
+      COUCHDB_PASSWORD: password
+    networks:
+      - logging
+    volumes:
+      - type: bind
+        source: ./couchdb/config/local.ini
+        target: /usr/local/etc/couchdb/local.ini
+      - ./couchdb/log/:/usr/local/var/log/couchdb
+  initd:
+    image: buildpack-deps:focal-curl
+    command: "bash /init.sh"
+    environment: 
+      COUCHDB_URL: couchdb:5984
+      COUCHDB_AUTH: admin:password
+    volumes:
+      - ./couchdb/config/init.sh:/init.sh
+    depends_on:
+      - couchdb
+    networks:
+      - logging
+  elasticsearch:
+    build:
+      context: elasticsearch/
+      args:
+        ELASTIC_VERSION: '8.5.0'
+    volumes:
+      - type: bind
+        source: ./elasticsearch/config/elasticsearch.yml
+        target: /usr/share/elasticsearch/config/elasticsearch.yml
+        read_only: true
+      - ./elasticsearch/item:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      ELASTIC_PASSWORD: elastic
+    networks:
+      - logging
+  heartbeat:
+    build:
+      context: heartbeat/
+      args:
+        HEARTBEAT_VERSION: '8.4.0'
+    entrypoint: "heartbeat -e -strict.perms=false"
+    volumes:
+      - ./heartbeat/heartbeat.yml:/usr/share/heartbeat/heartbeat.yml
+      - ./heartbeat/monitors.d/couchdb.yml:/usr/share/heartbeat/monitors.d/couchdb.yml
+    depends_on:
+      - logstash
+      - initd
+    links:
+      - logstash
+    networks:
+      - logging
+  express:
+    build: ./express
+    restart: on-failure
+    depends_on:
+      - mongo
+      - couchdb
+    env_file: ./.env
+    environment:
+      - DB_HOST=mongo
+      - DB_USERNAME=taUsr
+      - DB_PASSWORD=taPwd
+      - DB_PORT=$MONGODB_DOCKER_PORT
+      - DB_NAME=$MONGODB_DATABASE
+    ports:
+      - "3000:3000"
+    links:
+     - mongo
+    networks:
+      - logging
+  mongo:
+    image: mongo:latest
+    env_file: ./.env
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=$MONGODB_USER
+      - MONGO_INITDB_ROOT_PASSWORD=$MONGODB_PASSWORD
+      - MONGO_INITDB_DATABASE=$MONGODB_DATABASE
+    volumes:
+      - ./docker-entrypoint-initdb.d/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js
+    ports:
+      - '27018:27017'
+    networks:
+      - logging
+  react:
+    build: ./react
+    volumes:
+      - ./react/:/usr/src/app
+    depends_on:
+      - express
+    ports:
+      - 8080:8080
+    networks:
+      - logging
+
+networks:
+  logging:
+    driver: bridge
+
+volumes:
+  elasticsearch:

@@ -1,0 +1,70 @@
+FROM ubuntu:bionic
+
+RUN apt-get update && \
+    apt-get install -y zlib1g-dev build-essential vim rake git curl libssl-dev libreadline-dev libyaml-dev  \
+      libxml2-dev libxslt-dev openjdk-11-jdk-headless curl iputils-ping netcat && \
+    apt-get clean
+
+WORKDIR /root
+
+RUN adduser --disabled-password --gecos "" --home /home/logstash logstash && \
+    mkdir -p /usr/local/share/ruby-build && \
+    mkdir -p /opt/logstash && \
+    mkdir -p /opt/logstash/data && \
+    mkdir -p /mnt/host && \
+    chown logstash:logstash /opt/logstash
+
+USER logstash
+WORKDIR /home/logstash
+
+# used by the purge policy
+LABEL retention="keep"
+
+# Setup gradle wrapper. When running any `gradle` command, a `settings.gradle` is expected (and will soon be required).
+# This section adds the gradle wrapper, `settings.gradle` and sets the permissions (setting the user to root for `chown`
+# and working directory to allow this and then reverts back to the previous working directory and user.
+COPY --chown=logstash:logstash logstash-config/gradlew /opt/logstash/gradlew
+COPY --chown=logstash:logstash logstash-config/gradle/wrapper /opt/logstash/gradle/wrapper
+COPY --chown=logstash:logstash logstash-config/settings.gradle /opt/logstash/settings.gradle
+WORKDIR /opt/logstash
+RUN for iter in `seq 1 10`; do ./gradlew wrapper --warning-mode all && exit_code=0 && break || exit_code=$? && echo "gradlew error: retry $iter in 10s" && sleep 10; done; exit $exit_code
+WORKDIR /home/logstash
+
+COPY logstash-config/versions.yml /opt/logstash/versions.yml
+COPY logstash-config/LICENSE.txt /opt/logstash/LICENSE.txt
+COPY logstash-config/NOTICE.TXT /opt/logstash/NOTICE.TXT
+COPY logstash-config/licenses /opt/logstash/licenses
+COPY logstash-config/CONTRIBUTORS /opt/logstash/CONTRIBUTORS
+COPY logstash-config/Gemfile.template Gemfile.jruby-2.6.lock.* /opt/logstash/
+COPY logstash-config/Rakefile /opt/logstash/Rakefile
+COPY logstash-config/build.gradle /opt/logstash/build.gradle
+COPY logstash-config/rubyUtils.gradle /opt/logstash/rubyUtils.gradle
+COPY logstash-config/rakelib /opt/logstash/rakelib
+COPY logstash-config/config /opt/logstash/config
+COPY logstash-config/spec /opt/logstash/spec
+COPY logstash-config/qa /opt/logstash/qa
+COPY logstash-config/lib /opt/logstash/lib
+COPY logstash-config/pkg /opt/logstash/pkg
+COPY logstash-config/buildSrc /opt/logstash/buildSrc
+COPY logstash-config/tools /opt/logstash/tools
+COPY logstash-config/logstash-core /opt/logstash/logstash-core
+COPY logstash-config/logstash-core-plugin-api /opt/logstash/logstash-core-plugin-api
+COPY logstash-config/bin /opt/logstash/bin
+COPY logstash-config/modules /opt/logstash/modules
+COPY logstash-config/x-pack /opt/logstash/x-pack
+COPY logstash-config/ci /opt/logstash/ci
+COPY ./docker-entrypoint /docker-entrypoint
+COPY env2yaml /usr/local/bin/env2yaml
+
+USER root
+RUN rm -rf build && \
+    mkdir -p build && \
+    chown -R logstash:logstash /opt/logstash && \
+    chmod +x /docker-entrypoint && \
+    chmod +x /usr/local/bin/env2yaml
+USER logstash
+WORKDIR /opt/logstash
+
+LABEL retention="prune"
+
+ENTRYPOINT ["/docker-entrypoint"]

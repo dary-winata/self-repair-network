@@ -1,0 +1,7 @@
+- type: tcp
+  id: couchdb-hb2
+  name: couchdb-2
+  enabled: true
+  hosts: ["couchdb2"]
+  ports: [5984]
+  schedule: '@every 10s'
